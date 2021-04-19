@@ -1,0 +1,15 @@
+{
+	"tipo":"ms",
+	"descripcion":"Proyecto de Microservicio",
+	"deploy": {
+		"NAME_PROJECT" : "cloud-sdk-script-scaled",
+		"CANAL_DIGITAL" : "go",
+		"NAMESPACE": "godesa",
+		"VERSION": "v1.0.0"
+	},
+	"owner": {
+		"date": "14/04/2021",
+		"name": "Mariett Ortega",
+		"email": "soporte@argacme.cl"
+	}
+}

@@ -1,0 +1,69 @@
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+# version: @version_
+namespace: @namespace_
+replicaCount: 1
+revisionHistoryLimit: 3
+type: worker
+image:
+  repository: @repository_
+  #repository: registry.argacme.corp:32000/<CAMBIARME>/node_alpine_<CAMBIARME>
+  tag: @tag_
+  pullPolicy: IfNotPresent
+ ####################################################
+ #	ADVERTENCIA: NO MODIFICAR LOS SIGUIENTES VALORES:
+ #  resources:
+ #  requests:
+ #    cpu: 40m
+ #    memory: 300Mi
+ # readinessProbe: {}
+  ####################################################
+  resources:
+    requests:
+      cpu: 40m
+      memory: 300Mi
+  readinessProbe: {}
+  # Example (replace readinessProbe: {} with the following):
+  # readinessProbe:
+  #   httpGet:
+  #     path: /ready
+  #     port: 3000
+  #   initialDelaySeconds: 3
+  #   periodSeconds: 5
+  livenessProbe:
+    httpGet:
+      path: /argacme/<CAMBIARME>/v1/health
+      port: 3000
+    initialDelaySeconds: 20
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 5
+ingress:
+  enabled: true
+service:
+  name: node
+  type: ClusterIP
+  servicePort: 3000
+  ingressPath: /argacme/<CAMBIARME>/
+hpa:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 1
+  metrics:
+    cpu:
+      targetAverageUtilization: 70
+    memory:
+      targetAverageUtilization: 70
+services:
+base:
+  enabled: false
+  replicaCount: 1
+  image:
+    tag: v0.9.9
+  weight: 100
+istio:
+  enabled: false
+  weight: 100
+configmap:
+  LOG_LEVEL: debug
+  PORT: 3000

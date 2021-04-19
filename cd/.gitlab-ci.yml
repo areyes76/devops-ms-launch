@@ -1,0 +1,109 @@
+# ARCHIVO ASOCIADO A QA
+variables:
+  #CI_DEBUG_TRACE: "true"
+  PROJECT_NAME: $CI_PROJECT_NAME
+  DOCKER_IMAGE: "${REGISTRYDESA}/${JSON_NAMESPACE}/${IMAGENAME}_${CI_PROJECT_NAME}_${VERSION}:${CI_PIPELINE_ID}"
+  LINE: "--===========================================================--"
+
+stages:
+  - start
+  - kubernetes
+
+start:
+  stage: start
+  before_script:
+      - datetime=$(date '+%d-%m-%Y %H:%M:%S')
+      - echo "${datetime}"
+      - jq --version   
+      - JSON_PULL_NAMESPACE="$(jq '.deploy.pull_namespace' data.json | sed s/" "/_/g | sed s/'"'/''/g )"
+      - JSON_NAMESPACE="$(jq '.deploy.namespace' data.json | sed s/" "/_/g | sed s/'"'/''/g )"
+      - JSON_IMAGE="$(jq '.deploy.image' data.json | sed s/" "/_/g | sed s/'"'/''/g)"
+      - JSON_TAG="$(jq '.deploy.tag' data.json | sed s/" "/_/g | sed s/'"'/''/g)"
+      - JSON_REGISTRY="$(jq '.deploy.registry' data.json | sed s/" "/_/g | sed s/'"'/''/g )"
+      - JSON_IMAGE_REGISTRY="${JSON_REGISTRY}/${JSON_NAMESPACE}/${JSON_IMAGE}:${JSON_TAG}"
+      - IMAGE_REGISTRY="${JSON_REGISTRY}/${JSON_PULL_NAMESPACE}/${JSON_IMAGE}:${JSON_TAG}"          
+  script:
+      #- echo "start script"
+      - echo "TRABAJANDO EN EL PROYECTO CI_PROJECT_NAME >> ${CI_PROJECT_NAME}"
+      - docker pull ${IMAGE_REGISTRY}
+      - docker tag ${IMAGE_REGISTRY} ${JSON_IMAGE_REGISTRY}
+      - docker push ${JSON_IMAGE_REGISTRY}        
+  allow_failure: false
+
+kubernetes:
+  stage: kubernetes
+  before_script:   
+      - echo "PASO kubernetes before_script ........................"       
+      - JSON_NAMESPACE="$(jq '.deploy.namespace' data.json | sed s/" "/_/g | sed s/'"'/''/g )"
+      - JSON_TAG="$(jq '.deploy.tag' data.json | sed s/" "/_/g | sed s/'"'/''/g)"
+      - JSON_CLUSTER="$(jq '.deploy.cluster' data.json | sed s/" "/_/g | sed s/'"'/''/g)"
+      #- echo "JSON_CLUSTER:${JSON_CLUSTER}"
+      - whoami
+      - |
+        if [ $JSON_CLUSTER != null ]
+        then
+          echo "SE CAMBIA DE CLUSTER ${JSON_CLUSTER}"
+          kubectlExecution="$(kubectl config use-context ${JSON_CLUSTER} )"
+        else
+          echo "SIN CAMBIO DE CLUSTER...."
+        fi        
+      - curl -k -o helmchart3.tar --header "PRIVATE-TOKEN:${TOKEN_GITLAB_EE}"  http://gitlab.argacme.com/devops/config/helmchart/-/archive/master/helmchart3-master.tar
+      - tar -xvf helmchart3.tar
+      - sed -i 's/name:\ @name_/name:\ '\"${CI_PROJECT_NAME}\"'/g' helmchart3-master/ms-project/Chart.yaml
+      - mkdir -p logs
+      - \cp data.json helmchart3-master/
+      - \cp values.yaml helmchart3-master/
+      - cd helmchart3-master/
+      - mv ms-project/ ${CI_PROJECT_NAME}
+      - \cp values.yaml ${CI_PROJECT_NAME}/
+  script:
+      - echo "kubernetes script ...................................."
+      - sh exec.sh ${CI_PROJECT_NAME}
+      - kubectl config view | grep "current-context"
+      - kubectl get nodes
+      - echo "......................................................"
+      - cat ${CI_PROJECT_NAME}/values.yaml
+      - echo "......................................................"
+      # Seccion de docker connect
+      - set +e # Disable exit on error
+      - |
+        STATUS="$(helm list --all-namespaces | grep ${PROJECT_NAME}-${VERSION} | grep ${JSON_NAMESPACE} | head -n 1 | awk '{print $8}')"
+        echo "STATUS => ${STATUS}"
+      - set -e
+      - |
+        if [[ $STATUS == "deployed" ]]; then
+          echo "deployed......."
+          echo "Se actualiza el chart"
+          echo "helm upgrade ${PROJECT_NAME}-${VERSION} ./${PROJECT_NAME}/ --namespace ${JSON_NAMESPACE} --no-hooks"
+          helmExecution="$(helm upgrade ${PROJECT_NAME}-${VERSION} ./${PROJECT_NAME}/ --namespace ${JSON_NAMESPACE} --no-hooks)"
+        elif [[ $STATUS == "failed" ]]; then
+          echo "failed......."
+          echo "helm delete ${PROJECT_NAME}-${VERSION} -n ${JSON_NAMESPACE}"
+          helmExecution="$(helm delete ${PROJECT_NAME}-${VERSION} -n ${JSON_NAMESPACE})"
+          echo "Instalando chart"
+          echo "helm install ${PROJECT_NAME}-${VERSION} ./${PROJECT_NAME}/ --namespace ${JSON_NAMESPACE} --no-hooks"
+          helmExecution="$(helm install ${PROJECT_NAME}-${VERSION} ./${PROJECT_NAME}/ --namespace ${JSON_NAMESPACE} --no-hooks)"
+        else
+          echo "install......."
+          echo "helm install ${PROJECT_NAME}-${VERSION} ./${PROJECT_NAME}/ --namespace ${JSON_NAMESPACE} --no-hooks"
+          helmExecution="$(helm install ${PROJECT_NAME}-${VERSION} ./${PROJECT_NAME}/ --namespace ${JSON_NAMESPACE} --no-hooks)"
+        fi 
+      - helm list --all-namespaces | grep ${JSON_NAMESPACE}
+      - echo "......................................................"
+      - HELM_FILE_LOG="helm_${PROJECT_NAME}-${JSON_TAG}-Pipeline-${CI_PIPELINE_ID}-${CI_COMMIT_SHA:0:8}.txt"
+      - echo "$helmExecution" >> ../logs/${HELM_FILE_LOG}
+      # SE COPIA EL ARCHIVO LOG EN LA RUTA DEL RUNNER
+      - cp ../logs/${HELM_FILE_LOG} /home/gitlab-runner/logs/desa/helm/${HELM_FILE_LOG}     
+      - |
+        if [ $JSON_CLUSTER != null ]
+        then
+          kubectlExecution="$(kubectl config use-context preproduccion)"
+        else
+          echo "SIN CAMBIO DE CLUSTER...."
+        fi               
+  artifacts:
+    name: "helm_${PROJECT_NAME}-${CI_PIPELINE_ID}-${CI_COMMIT_SHA:0:8}"
+    when: always
+    paths:
+      - logs/    
+# Fin CI

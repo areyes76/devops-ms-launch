@@ -1,0 +1,19 @@
+{
+	"tipo":"<CAMBIARME>",
+	"descripcion":"Este micro-servicio es bkn, se llama <CAMBIARME>",
+	"deploy": {
+		"registry": "registry.argacme.corp:36000",	
+		"cluster": "kubernetes@laboratoro.local",
+		"namespace": "<CAMBIARME>",
+		"pull_namespace": "<CAMBIARME>",
+		"name": "<CAMBIARME>",
+		"image": "node_alpine_<CAMBIARME>",
+		"tag": "<CAMBIARME>",
+		"ingressPath": "<CAMBIARME>"
+	},
+	"owner": {
+		"date": "21/01/2020 <CAMBIARME>",
+		"name": "<CAMBIARME>",
+		"email": "<CAMBIARME>"
+	}
+}

@@ -1,0 +1,75 @@
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+namespace: @namespace_
+replicaCount: 1
+revisionHistoryLimit: 3
+type: worker
+image:
+  repository: @registry_
+  tag: @tag_
+  pullPolicy: IfNotPresent 
+ ####################################################
+ #	ADVERTENCIA: NO MODIFICAR LOS SIGUIENTES VALORES:
+ #  resources:
+ #  requests:
+ #    cpu: 40m
+ #    memory: 300Mi
+ # readinessProbe: {}
+  ####################################################
+  resources:
+    requests:
+      cpu: 40m
+      memory: 300Mi
+  readinessProbe: {}
+  # Example (replace readinessProbe: {} with the following):
+  # readinessProbe:
+  #   httpGet:
+  #     path: /ready
+  #     port: 3000
+  #   initialDelaySeconds: 3
+  #   periodSeconds: 5
+  livenessProbe:
+    httpGet:
+      path: @{CAMBIAR}
+      port: 3000
+    initialDelaySeconds: 20 
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 5 
+ingress:
+  enabled: false 
+service:
+  name: node
+  type: ClusterIP
+  servicePort: 3000
+  ingressPath: @{CAMBIAR}
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    cpu:
+      targetAverageUtilization: 70
+    memory:
+      targetAverageUtilization: 70
+services:
+base:
+  enabled: false
+  replicaCount: 1
+  image:
+    tag : v0.9.9
+  weight: 100
+istio:
+  enabled: false
+  weight: 100
+#################################################################################################
+####  AGREGAR o MODIFICAR LAS VARIABLES Y VALOR PARA SER TRASPASADO A LA IMAGEN DEPLOYADA #######
+####    EJEMPLO:                                                                          #######
+####      VARIABLE001: valor001                                                           #######
+####      VARIABLE002: valor002                                                           #######
+#################################################################################################
+configmap:
+  LOG_LEVEL: info
+  PORT: 3000
+  KEY_ENCRYPT: KEY20GO20_UJU
+  MS_CONFIG_VERSION_BANKS: '12,1.15,1.0-37,1.14,0.3-1,1.0,0.2-16,1.1,0.1-14,0.6,0.1'

@@ -1,0 +1,68 @@
+# ARCHIVO DE CREACION DE PROYECTO MS
+variables:
+  DOCKER_IMAGE: "registry.argacme.corp:32000"
+
+stages:
+    - build
+
+build:
+    stage: build
+    script:
+      - echo PROCESO DE CREACION DE MISCROSERVICIOS........
+      - jq --version
+      # SE CARGAN LOS VALORES DESDE EL ARCHIVO data.json 
+      - DATA_NAME_PROJECT="$(jq '.deploy.NAME_PROJECT' data.json | sed s/" "/_/g | sed s/'"'/''/g )"
+      - DATA_CANAL_DIGITAL="$(jq '.deploy.CANAL_DIGITAL' data.json | sed s/" "/_/g | sed s/'"'/''/g )"
+      - DATA_NAMESPACE="$(jq '.deploy.NAMESPACE' data.json | sed s/" "/_/g | sed s/'"'/''/g )"
+      - DATA_VERSION="$(jq '.deploy.VERSION' data.json | sed s/" "/_/g | sed s/'"'/''/g )"
+      # FIN CARGA DE VALORES
+      # CREACION DEL DIRECTORIO QUE ALOJARA EL MICROSERVICIO EN EL REPOITORIO
+      - mkdir -p ${DATA_NAME_PROJECT} && chmod -R 777 ${DATA_NAME_PROJECT} && cd ${DATA_NAME_PROJECT}
+      - git init && cp ../README.md .
+      - git add . && git commit -m "Initial commit Rama master"
+      - git remote add origin http://gitlab-ci-token:${TOKEN_GITLAB_EE}@gitlab.argacme.com/canales-digitales/${DATA_CANAL_DIGITAL}/ms/${DATA_NAME_PROJECT}
+      - git push -u origin master
+      # FIN CREACION
+      - curl -o project-info.json --request GET --header "PRIVATE-TOKEN:${TOKEN_GITLAB_EE}" "http://gitlab.argacme.com/api/v4/search?scope=projects&search=${DATA_NAME_PROJECT}"
+      #- curl -o project-info.json -X GET 'http://gitlab.argacme.com/api/v4/search?scope=projects&search=${DATA_NAME_PROJECT}' -H 'PRIVATE-TOKEN:${TOKEN_GITLAB_EE}' 
+      - ID_PROJECTS="$(jq '.[] | .id' project-info.json | sed s/" "/_/g | sed s/'"'/''/g )"
+      - ID_PROJECT=0
+      - echo ID_PROJECTS $ID_PROJECTS
+      - >
+        for id in $ID_PROJECTS; do
+          ID_PROJECT=${id}
+          break
+        done
+      - echo ID_PROJECT $ID_PROJECT
+      - rm -f project-info.json
+      # SE CREAN LA VARIABLES JUNTO A SUS VALORES PARA SER UTILIZADOS EN EL NUEVO PROYECTO.
+      - curl --request POST --header "PRIVATE-TOKEN:${TOKEN_GITLAB_EE}" "http://gitlab.argacme.com/api/v4/projects/${ID_PROJECT}/variables" --form "key=IMAGENAME" --form "value=${IMAGENAME}"
+      - curl --request POST --header "PRIVATE-TOKEN:${TOKEN_GITLAB_EE}" "http://gitlab.argacme.com/api/v4/projects/${ID_PROJECT}/variables" --form "key=K8S_CONTEXT" --form "value=${K8S_CONTEXT}"
+      - curl --request POST --header "PRIVATE-TOKEN:${TOKEN_GITLAB_EE}" "http://gitlab.argacme.com/api/v4/projects/${ID_PROJECT}/variables" --form "key=NAMESPACE" --form "value=${DATA_NAMESPACE}"
+      - curl --request POST --header "PRIVATE-TOKEN:${TOKEN_GITLAB_EE}" "http://gitlab.argacme.com/api/v4/projects/${ID_PROJECT}/variables" --form "key=PASS_SONAR" --form "value=${PASS_SONAR}"
+      - curl --request POST --header "PRIVATE-TOKEN:${TOKEN_GITLAB_EE}" "http://gitlab.argacme.com/api/v4/projects/${ID_PROJECT}/variables" --form "key=REGISTRYDESA" --form "value=${REGISTRYDESA}"
+      - curl --request POST --header "PRIVATE-TOKEN:${TOKEN_GITLAB_EE}" "http://gitlab.argacme.com/api/v4/projects/${ID_PROJECT}/variables" --form "key=SONAR_IP" --form "value=${SONAR_IP}"
+      - curl --request POST --header "PRIVATE-TOKEN:${TOKEN_GITLAB_EE}" "http://gitlab.argacme.com/api/v4/projects/${ID_PROJECT}/variables" --form "key=TOKEN_GITLAB_EE" --form "value=${TOKEN_GITLAB_EE}"
+      - curl --request POST --header "PRIVATE-TOKEN:${TOKEN_GITLAB_EE}" "http://gitlab.argacme.com/api/v4/projects/${ID_PROJECT}/variables" --form "key=TOKEN_USER_SONAR" --form "value=${TOKEN_USER_SONAR}"
+      - curl --request POST --header "PRIVATE-TOKEN:${TOKEN_GITLAB_EE}" "http://gitlab.argacme.com/api/v4/projects/${ID_PROJECT}/variables" --form "key=USER_SONAR" --form "value=${USER_SONAR}"
+      - curl --request POST --header "PRIVATE-TOKEN:${TOKEN_GITLAB_EE}" "http://gitlab.argacme.com/api/v4/projects/${ID_PROJECT}/variables" --form "key=VERSION" --form "value=${DATA_VERSION}"
+      # FIN CREACION VARIABLES 
+      # PASO PARA CREAR LA RAMA development-CI
+      - git checkout -b development-CI && cp -r ../ci/. .
+      - sed -i 's/namespace:\ @namespace_/namespace:\ '${DATA_NAMESPACE}'/g' values.yaml
+      - REPOSITORY="${REGISTRYDESA}\\/${DATA_NAMESPACE}\\/${IMAGENAME}_${DATA_NAME_PROJECT}"
+      - echo $REPOSITORY
+      - sed -i 's/repository:\ @repository_/repository:\ '${REPOSITORY}'/g' values.yaml
+      - ls -ltra
+      - git add -A && git commit -m "Initial commit Rama development-CI"
+      - git push -u origin development-CI 
+      # FIN PASO CREAR LA RAMA development-CI
+      # PASO PARA CREAR LA RAMA qa-CD
+      - git checkout -b qa-CD && cp -r ../cd/. .
+      - rm -f README-RAMA.md
+      - git add -A && git commit -m "Initial commit Rama qa-CD"
+      - git push -u origin qa-CD 
+      # FIN PASO CREAR LA RAMA qa-CD
+      # PROTEGEMOS LA RAMA
+      - curl --request POST --header "PRIVATE-TOKEN:${TOKEN_GITLAB_EE}" "http://gitlab.argacme.com/api/v4/projects/${ID_PROJECT}/protected_branches?name=development-CI&push_access_level=30&merge_access_level=30&unprotect_access_level=40"
+      - curl --request POST --header "PRIVATE-TOKEN:${TOKEN_GITLAB_EE}" "http://gitlab.argacme.com/api/v4/projects/${ID_PROJECT}/protected_branches?name=qa-CD&push_access_level=40&merge_access_level=40&unprotect_access_level=40"

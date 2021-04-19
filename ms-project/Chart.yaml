@@ -1,0 +1,4 @@
+apiVersion: v1
+description: A Helm chart for servipag kubernetes
+name: @name_
+version: @version_

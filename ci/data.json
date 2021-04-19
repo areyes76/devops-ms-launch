@@ -1,0 +1,12 @@
+{
+	"tipo":"ms",
+	"descripcion":"micro-servicio <CAMBIARME>",
+	"deploy": {
+		"version":"v1.0.0"
+	},
+	"owner": {
+		"date": "23-12-2020",
+		"name": "sistemas",
+		"email": "desa@argacme.cl"
+	}
+}

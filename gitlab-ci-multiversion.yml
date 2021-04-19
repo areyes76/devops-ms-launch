@@ -1,0 +1,240 @@
+# ARCHIVO DE CREACION DE PROYECTO MS en development-CI para MULTIVERSION
+variables:
+    #CI_DEBUG_TRACE: "true"
+    PROJECT_NAME: $CI_PROJECT_NAME
+    DOCKER_IMAGE: "${REGISTRYDESA}/${NAMESPACE}/${IMAGENAME}_${CI_PROJECT_NAME}_${VERSION}:${CI_PIPELINE_ID}"
+    LINE: "--===========================================================--"
+
+stages:
+      - start
+      - sonar
+      - build
+      - kubernetes
+
+start:
+  stage: start
+  only:
+    - development-CI
+    - qa-CD  
+  before_script:
+      - echo "start before_script"
+      - echo "export ROLLBACK=False" > rollback
+      - datetime=$(date '+%d-%m-%Y %H:%M:%S')
+      - echo "${datetime}"
+  script:
+      - echo "start script"
+  allow_failure: false
+
+pruebas sonar:
+  stage: sonar
+  only:
+    - development-CI
+    - qa-CD  
+  before_script:
+      - echo "start sonarqube"
+      - date_sonar=$(date '+%Y-%m-%d')
+      - NPMRCFILE=.npmrc
+      - Commit=$commit
+      - |
+        if [[ ! -z $commit ]]; then
+
+          git checkout $commit
+
+        fi
+      - PROJECT_KEY=$(grep sonar.projectKey sonar-project.properties | cut -d '=' -f 2)
+      - PROJECT_NAME=$(grep sonar.projectName sonar-project.properties | cut -d '=' -f 2)      
+      - EXIST=$(curl -k -u $USER_SONAR:$PASS_SONAR -X GET ${SONAR_IP%$'\r'}/api/projects/index?key=${PROJECT_KEY%$'\r'})
+      - echo ${EXIST}
+      - |
+        if [ $(expr $EXIST) = 0 ]; then
+          echo ${EXIST}
+          curl -u $USER_SONAR:$PASS_SONAR --data "key=${PROJECT_KEY}&name=${PROJECT_NAME}" -X POST ${SONAR_IP%$'\r'}/api/projects/create
+        fi
+      - set -e #Enable exit on error        
+  script:
+      - curl -k -o ${NPMRCFILE} --header "PRIVATE-TOKEN:${TOKEN_GITLAB_EE}" http://gitlab.argacme.com/devops/docker-files/raw/master/.npmrc
+      - rm -f package-lock.json
+      - npm install
+      - npm run tsc
+      - npm run test
+      - ls -ltra
+      - cd coverage/
+      - ls -ltra
+      - cd ..
+      - /opt/sonar-scanner-4.2/bin/sonar-scanner -Dsonar.login="${TOKEN_USER_SONAR}"
+      - sleep 15
+      - java -jar /opt/sonarqube/extensions/plugins/sonar-cnes-report-3.1.0.jar -s ${SONAR_IP%$'\r'} -a $USER_SONAR -c -p ${PROJECT_KEY%$'\r'} -t ${TOKEN_USER_SONAR%$'\r'}
+      - mkdir reporte_sonar
+      - cp $date_sonar-* reporte_sonar/
+      - RESULTADO=$(curl -k -u $USER_SONAR:$PASS_SONAR -X GET "${SONAR_IP%$'\r'}/api/qualitygates/project_status?projectKey=${PROJECT_KEY%$'\r'}" | cut -d'"' -f 6)
+      - echo ${RESULTADO}
+      - |
+        if [ ! -z $RESULTADO ]; then
+          if [ "$RESULTADO" == "OK" ]; then
+              echo "Quality Gate Aprobada para ${PROJECT_NAME}"
+          else   
+              echo "Quality Gate NO Aprobada para ${PROJECT_NAME}"
+          exit 1
+          fi
+        else
+            echo "Error en la obtencion de Quality Gate para ${PROJECT_NAME}"
+          exit 1
+        fi
+      - echo "FIN SONAR......"
+  allow_failure: false
+  artifacts:
+    name: "reporte_sonarqube"
+    when: always 
+    paths:
+      - reporte_sonar/
+
+build image:
+  stage: build
+  only:
+    - development-CI
+    - qa-CD  
+  before_script:
+      - echo "build before_script"  
+      - |
+        if [[ ! -z $commit ]]; then
+          git checkout $commit
+          CI_COMMIT_SHA=$(git rev-parse --short=8 $commit)
+        fi
+      - |
+      - echo ${CI_COMMIT_SHA}
+      - DOCKERFILE=Dockerfile_node
+      - NPMRCFILE=.npmrc
+      - echo "FIN BUILD......"
+  script:
+      - set +e # Disable exit on error
+      - ls -ltra
+      - curl -k -o ${NPMRCFILE} --header "PRIVATE-TOKEN:${TOKEN_GITLAB_EE}" http://gitlab.argacme.com/devops/docker-files/raw/master/.npmrc
+      - rm -f package-lock.json
+      - VAR_NPM_INSTALL="$(npm install 2>&1 --production && npm ddp | grep -w ERR > npm.log)"
+      - VAR_NPM_VIEW="$(grep -in error npm.log)"
+      - |
+        if [[ ${VAR_NPM_VIEW} ]]; then
+          cat npm.log
+          echo "******************    OCURRIO UN ERROR   ******************";
+          exit 1;
+        fi
+      - VAR_RUN_TSC="$(npm run tsc --production | grep -w error > runtsc.log)"
+      - VAR_TSC_VIEW="$(grep -in error runtsc.log)"
+      - |
+        if [[ ${VAR_TSC_VIEW} ]]; then
+          cat runtsc.log
+          echo "******************    OCURRIO UN ERROR   ******************";
+          exit 1;
+        fi
+      - curl -k -o ${DOCKERFILE} --header "PRIVATE-TOKEN:${TOKEN_GITLAB_EE}" http://gitlab.argacme.com/devops/docker-files/raw/master/Dockerfile
+      - DOCKER_IMAGE="${REGISTRYDESA}/${NAMESPACE}/${IMAGENAME}_${CI_PROJECT_NAME}:${CI_PIPELINE_ID}"
+      - docker build -t ${DOCKER_IMAGE}_${CI_COMMIT_SHA:0:8} -f ${DOCKERFILE} .
+      - VAR_DOCKER_SEARCH="$(docker images | grep ${CI_PIPELINE_ID}_${CI_COMMIT_SHA:0:8})"
+      - |
+        if [ -z "${VAR_DOCKER_SEARCH}" ]; then
+          echo "******************    NO SE ENCONTRO IMAGEN ${CI_PIPELINE_ID}_${CI_COMMIT_SHA:0:8}      ******************";
+          exit 1;
+        fi
+      - docker push ${DOCKER_IMAGE}_${CI_COMMIT_SHA:0:8}
+      - echo "docker push ${DOCKER_IMAGE}_${CI_COMMIT_SHA:0:8}"
+      - echo "FIN SCRIPT BUILD......"
+
+kubernetes:
+  stage: kubernetes
+  only:
+    - development-CI
+    - qa-CD  
+  before_script:
+      - echo "PASO kubernetes before_script ........................"
+      - echo "VAR CI_COMMIT_SHA => ${CI_COMMIT_SHA}"
+      - echo "VAR REGISTRYDESA => ${REGISTRYDESA}"
+      - echo "VAR NAMESPACE => ${NAMESPACE}"
+      - echo "VAR IMAGENAME => ${IMAGENAME}"
+      - echo "VAR CI_PROJECT_NAME => ${CI_PROJECT_NAME}"
+      - echo "VAR CI_PIPELINE_ID => ${CI_PIPELINE_ID}"
+      - echo "VAR DOCKER_IMAGE => ${DOCKER_IMAGE}"
+      - echo "VAR CI_COMMIT_SHA:0:8 => ${CI_COMMIT_SHA:0:8}"
+      - JSON_VERSION="$(jq '.deploy.version' data.json | sed s/" "/_/g | sed s/'"'/''/g)"
+      - whoami      
+      - |
+        if [ ${K8S_CONTEXT} != null ]
+        then
+          echo "SE CAMBIA DE CLUSTER ${K8S_CONTEXT}"
+          kubectlExecution="$(kubectl config use-context ${K8S_CONTEXT})"
+        else
+          echo "SIN CAMBIO DE CLUSTER...."
+        fi       
+      - mkdir -p logs
+      - curl -k -o helmchart3.tar --header "PRIVATE-TOKEN:${TOKEN_GITLAB_EE}"  http://gitlab.argacme.com/devops/config/helmchart3/-/archive/master/helmchart3-master.tar
+      - tar -xvf helmchart3.tar
+      - |
+        if [ $JSON_VERSION != null ]
+        then
+          VERSION=$JSON_VERSION
+          echo "VAR VERSION => ${VERSION}"
+        else
+          echo "SIN CAMBIO DE VERSION...."
+        fi
+      - VERSION_AUX=${JSON_VERSION//./} 
+      - sed -i 's/name:\ @name_/name:\ '\"${CI_PROJECT_NAME}\"'/g' helmchart3-master/ms/Chart.yaml
+      - sed -i 's/version:\ @version_/version:\ '${VERSION}'/g' helmchart3-master/ms/Chart.yaml
+      - sed -i 's/version:\ @version_/version:\ '${VERSION_AUX}'/g' values.yaml
+      - sed -i 's/tag:\ @tag_/tag:\ '\"${CI_PIPELINE_ID}_${CI_COMMIT_SHA:0:8}\"'/g' values.yaml
+      - \cp values.yaml helmchart3-master/ms/
+      - mv helmchart3-master/ms/ helmchart3-master/${CI_PROJECT_NAME}
+      - cd helmchart3-master/
+      #- mv ms/ ${CI_PROJECT_NAME}
+      #- \cp values.yaml ${CI_PROJECT_NAME}//        
+  script:
+      - echo "kubernetes script ...................................."
+      - kubectl config view | grep "current-context"
+      - kubectl get nodes
+      #- VERSION=${VERSION}
+      - echo "......................................................"
+      - cat ${CI_PROJECT_NAME}/values.yaml
+      - echo "......................................................"
+      # Seccion de docker connect
+      - set +e # Disable exit on error
+      - |
+        STATUS="$(helm list -n ${NAMESPACE} | grep ${PROJECT_NAME}-${VERSION} | head -n 1 | awk '{print $8}')"        
+        echo "STATUS => ${STATUS}"
+      - set -e
+      - |
+        if [[ $STATUS == "deployed" ]]; then
+          echo "deployed......."
+          echo "Se actualiza el chart"
+          echo "helm upgrade ${PROJECT_NAME}-${VERSION} ./${PROJECT_NAME}/ --namespace ${NAMESPACE} --no-hooks"
+          helmExecution="$(helm upgrade ${PROJECT_NAME}-${VERSION} ./${PROJECT_NAME}/ --namespace ${NAMESPACE} --no-hooks)"
+        elif [[ $STATUS == "failed" ]]; then
+          echo "failed......."
+          echo "helm delete ${PROJECT_NAME}-${VERSION} -n ${NAMESPACE}"
+          helmExecution="$(helm delete ${PROJECT_NAME}-${VERSION} -n ${NAMESPACE})"
+          echo "Instalando chart"
+          echo "helm install ${PROJECT_NAME}-${VERSION} ./${PROJECT_NAME}/ --namespace ${NAMESPACE} --no-hooks"
+          helmExecution="$(helm install ${PROJECT_NAME}-${VERSION} ./${PROJECT_NAME}/ --namespace ${NAMESPACE} --no-hooks)"
+        else
+          echo "install......."
+          echo "helm install ${PROJECT_NAME}-${VERSION} ./${PROJECT_NAME}/ --namespace ${NAMESPACE} --no-hooks"
+          helmExecution="$(helm install ${PROJECT_NAME}-${VERSION} ./${PROJECT_NAME}/ --namespace ${NAMESPACE} --no-hooks)"
+        fi       
+      - echo "......................................................"
+      - HELM_FILE_LOG="helm_${PROJECT_NAME}-Pipeline-${CI_PIPELINE_ID}-${CI_COMMIT_SHA:0:8}.txt"
+      - echo "$helmExecution" >> ../logs/${HELM_FILE_LOG}
+      - echo "......................................................"
+      - helm list --all-namespaces  | grep ${PROJECT_NAME}
+      - echo "......................................................"      
+      # SE COPIA EL ARCHIVO LOG EN LA RUTA DEL RUNNER
+      - cp ../logs/${HELM_FILE_LOG} /home/gitlab-runner/logs/desa/helm/${HELM_FILE_LOG}           
+      - |
+        if [ ${K8S_CONTEXT} != null ]
+        then
+          kubectlExecution="$(kubectl config use-context preproduccion)"
+        else
+          echo "SIN CAMBIO DE CLUSTER...."
+        fi  
+  artifacts:
+    name: "helm_${PROJECT_NAME}-${CI_PIPELINE_ID}-${CI_COMMIT_SHA:0:8}"
+    when: always
+    paths:
+      - logs/       
+# Fin CI
